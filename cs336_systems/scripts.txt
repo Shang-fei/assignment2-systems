@@ -1,0 +1,3 @@
+#small
+python benchmark.py model.context_length=512 model.d_model=768 model.num_heads=12 model.num_layers=12 model.d_ff=3072 mode=forward_backward
+uv run nsys profile --trace=cuda,cudnn,cublas,osrt,nvtx --pytorch=functions-trace,autogradshapes-nvtx --cudabacktrace=all --python-backtrace=cuda --gpu-metrics-devices=0 -- python benchmark.py
