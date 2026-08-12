@@ -117,6 +117,7 @@ def benchmark(cfg):
 
     # Make sure warmup CUDA kernels are finished
     torch.cuda.synchronize()
+    use_mix = cfg.get('use_mix', False)
     profile_memory = cfg.get('profile_memory', False)
     if profile_memory:
         torch.cuda.memory._record_memory_history(max_entries=1000000)
@@ -132,34 +133,35 @@ def benchmark(cfg):
                     torch.cuda.synchronize()
                     start = timeit.default_timer()
 
-                    with torch.autocast(device_type='cuda', dtype=torch.bfloat16) if cfg.use_mix else nullcontext():
+                    with torch.autocast(device_type='cuda', dtype=torch.bfloat16) if use_mix else nullcontext():
                         with nvtx.range("forward"):
-                            outputs = model(inputs)
+                            model(inputs)
 
                     torch.cuda.synchronize()
                     times.append(timeit.default_timer() - start)
-                    del outputs
 
                 elif cfg.mode == "forward_backward":
                     torch.cuda.synchronize()
                     start = timeit.default_timer()
-                    
-                    outputs = model(inputs)
-                    loss = cross_entropy(outputs, targets)
-                    loss.backward()
-
+                    with torch.autocast(device_type='cuda', dtype=torch.bfloat16) if use_mix else nullcontext():
+                        with nvtx.range("forward"):
+                            outputs = model(inputs)
+                        with nvtx.range("loss"):
+                            loss = cross_entropy(outputs, targets)
+                        with nvtx.range("backward"):
+                            loss.backward()
+                        
                     torch.cuda.synchronize()
                     times.append(timeit.default_timer() - start)
 
                 elif cfg.mode == "forward_backward_optimizer":
                     torch.cuda.synchronize()
                     start = timeit.default_timer()
-                    with torch.autocast(device_type='cuda', dtype=torch.bfloat16) if cfg.use_mix else nullcontext():
+                    with torch.autocast(device_type='cuda', dtype=torch.bfloat16) if use_mix else nullcontext():
                         with nvtx.range("zero_grad"):
                             optimizer.zero_grad(set_to_none=True)
                         with nvtx.range("forward"):
-                            
-                                outputs = model(inputs)
+                            outputs = model(inputs)
                         with nvtx.range("loss"):
                             loss = cross_entropy(outputs, targets)
                         with nvtx.range("backward"):
@@ -167,13 +169,20 @@ def benchmark(cfg):
                         with nvtx.range("step"):
                             optimizer.step()
 
-                        torch.cuda.synchronize()
-                        times.append(timeit.default_timer() - start)
+                    torch.cuda.synchronize()
+                    times.append(timeit.default_timer() - start)
                 else:
                     raise ValueError(f"Unknown mode: {cfg.mode}")
 
     if profile_memory:
-        snapshot_path = f"./profiles/memory/{cfg.model_size}_{cfg.model.context_length}_{cfg.mode}.pickle"
+        precision = "bf16" if cfg.use_mix else "fp32"
+        snapshot_path = (
+            f"./profiles/memory/"
+            f"{cfg.model_size}_"
+            f"ctx{cfg.model.context_length}_"
+            f"{cfg.mode}_"
+            f"{precision}.pickle"
+        )
         torch.cuda.memory._dump_snapshot(snapshot_path)
         torch.cuda.memory._record_memory_history(enabled=None)
         print(f"Memory snapshot saved to: {snapshot_path}")
