@@ -108,16 +108,17 @@ def benchmark(cfg):
     model.train()
 
     # Warmup
+    use_mix = cfg.get('use_mix', True)
     for _ in range(cfg.warmup_steps):
-        outputs = model(inputs)
-        loss = cross_entropy(outputs, targets)
-        loss.backward()
-        optimizer.step()
-        optimizer.zero_grad()
+        with torch.autocast(device_type='cuda', dtype=torch.bfloat16) if use_mix else nullcontext():
+            outputs = model(inputs)
+            loss = cross_entropy(outputs, targets)
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
 
     # Make sure warmup CUDA kernels are finished
     torch.cuda.synchronize()
-    use_mix = cfg.get('use_mix', False)
     profile_memory = cfg.get('profile_memory', False)
     if profile_memory:
         torch.cuda.memory._record_memory_history(max_entries=1000000)
